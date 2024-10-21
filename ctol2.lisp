@@ -94,9 +94,11 @@
 
 (defun convert-function-definition (line)
   "Convert a function definition from C to Lisp."
-  (let ((parts (split-string line)))
-    (format nil "(defun ~A ()~%" (second parts)))
-)
+  (let ((parts (nreverse (split-string-into-parameters line))))
+    (format nil "(defun ~A (~{~A~^ ~})~%" (first parts) (rest parts))))
+
+;; Example usage:
+;(convert-function-definition "int main(int a, int b) {")
 
 (defun convert-block-start (line)
   "Convert a block start from C to Lisp."
@@ -115,19 +117,6 @@
 
 (ql:quickload "cl-ppcre")
 
-(defun split-string-into-parameters (str)
-  "Split a single C line such as 'int main(int a, int b)' into the function name and parameter names. Returns a list with the function name as the first element and the parameter names as the subsequent elements."
-  (let ((parts '()))
-    (cl-ppcre:register-groups-bind (function-name params)
-        ("^\\s*\\w+\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*\\{" str)
-      (push function-name parts)
-      (when (not (string= params ""))
-        (dolist (param (split-string params ","))
-          (cl-ppcre:register-groups-bind (param-name)
-              ("\\s*\\w+\\s+(\\w+)\\s*" param)
-            (push param-name parts)))))
-    (nreverse parts)))
-
 (defun split-string (str &optional (delimiter " "))
   "Split a string by a specified delimiter (default is space)."
   (let ((start 0)
@@ -139,19 +128,47 @@
                  (push (subseq str start i) result))
                (setf start (1+ i))))
     ;; Handle the last substring if the string does not end with a delimiter
-    (when (> (length str) start)
+    (when (> (length str) (1- start))
       (push (subseq str start) result))
     (nreverse result)))
 
 (defun extract-param-names (params)
-  "Extract parameter names from the function parameter string, ignoring types."
-  (when params
-    (let ((param-list (cl-ppcre:split "\\s*,\\s*" params)))
-      (mapcar #'(lambda (param)
-                  ;; Split each parameter by spaces and take the last part (the variable name)
-                  (car (last (cl-ppcre:split "\\s+" param))))
-              param-list))))
+  "Extract the parameter names from a C-style function parameter list, e.g., 'int a, int b'."
+  (mapcar #'second 
+          (mapcar (lambda (param)
+                    (cl-ppcre:split #\Space param))
+                  (cl-ppcre:split #\, params))))
 
+
+(defun split-string-into-parameters (str)
+  "Split a single C line such as 'int main(int a, int b)' into the function name and parameter names. Returns a list with the function name as the first element and the parameter names as the subsequent elements."
+  (let ((parts '()))
+    (cl-ppcre:register-groups-bind (function-name params)
+        ("^\\s*\\w+\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*\\{" str)
+      (push function-name parts)
+      (when (not (string= params ""))
+        (setf parts (append parts (split-param-helper params)))))
+        (print parts)
+    (nreverse parts)))
+
+
+(defun split-param-helper (params)
+  "Recursive helper to split the parameters, discarding types such as int, float, void* etc."
+  (if (string= params "")
+      nil
+      (let* ((start (position #\, params))
+             (param (if start
+                        (subseq params 0 start)
+                        params))
+             (rest (if start
+                       (subseq params (if (char= (char params (1+ start)) #\Space)
+                                          (+ start 2)
+                                          (1+ start)))
+                       ""))
+             (param-name (second (cl-ppcre:split #\Space param))))
+        (cons param-name (split-param-helper rest)))))
+
+"Recursive helper to split the parameters"
 ;; File I/O functions
 
 (defun read-file (filename)
@@ -191,3 +208,4 @@
 ;; Example usage:
 ;(main "input.c" "output.lisp")
 ;(split-string "int main (int a) {}")
+(split-string-into-parameters "int main(int a, int b) {")

@@ -1,5 +1,4 @@
 (ql:quickload "cl-ppcre")
-;(load "env.lisp")
 
 (defun line-type (line)
   "Determine the type of the C code line."
@@ -26,7 +25,7 @@
          (progn (format t "Matched return  ") 'return-statement))
          
         ;; Match function calls
-        ((cl-ppcre:scan "^\\s*\\w+\\s*\\(.*\\)\\s*;$" line) 
+        ((cl-ppcre:scan "^\\s*\\w+\\s*\\(.*\\)\\s*;\\s*$" line)
          (progn (format t "Matched function-call  ") 'function-call))
          
         ;; Match function definitions
@@ -64,8 +63,6 @@
   (format t "Converting line: ~A using function: ~A~%" line conversion-fn)
   (funcall conversion-fn line))
 
-;; Conversion main functions
-
 (defun convert-lines (lines)
   "Recursively process each line and convert it to Lisp."
   (if (null lines)
@@ -76,15 +73,11 @@
              (converted-line (convert line conversion-fn)))
         (cons converted-line (convert-lines (cdr lines))))))
 
-;; Conversion functions
-
-;; if (a > b) { -> (if (> a b))
 (defun convert-if (line)
   "Convert an 'if' statement from C to Lisp."
   (let ((extracted (split-if-into-parameters line)))
     (print extracted)
     (format nil "(if ~A" (c-to-lisp-arithmetic (first extracted)))))
-;(convert-if "if (a > b) {")
 
 (defun convert-for (line)
   "Convert a 'for' loop from C to Lisp."
@@ -94,30 +87,19 @@
   "Convert a 'while' loop from C to Lisp."
   (format nil "(loop while ~A~%" line))
 
+(defun extract-assignment (line)
+  (cl-ppcre:register-groups-bind (type var-name value)
+      ("^\\s*(\\w+\\s+)?(\\w+)\\s*=\\s*(.+);?$" line)
+    (if (and var-name value)
+        (progn            
+          (list var-name (cl-ppcre:regex-replace ";" value "")))  ;; Return the captured groups with ";" removed from value
+        (format t "No match~%"))))
 
-  (defun extract-assignment (line)
-    (cl-ppcre:register-groups-bind (type var-name value)
-        ("^\\s*(\\w+\\s+)?(\\w+)\\s*=\\s*(.+);?$" line)
-      (if (and var-name value)
-          (progn
-            (format t "Matched assignment~%")
-            (when type
-              (format t "Type: ~a~%" type))
-            (format t "Variable name: ~a~%" var-name)
-            (format t "Assigned value: ~a~%" (cl-ppcre:regex-replace ";" value ""))
-            (list var-name (cl-ppcre:regex-replace ";" value "")))  ;; Return the captured groups with ";" removed from value
-          (format t "No match~%"))))
-        
-;; int a = 5; -> (setf a 5), a = 5; -> (setf a 5)
 (defun convert-assignment (line)
   "Converts a variable assignment from C to Lisp."
   ;; Assuming line can be 'int x = 5;' or 'x = 5;'
   (let ((extracted (extract-assignment line)))
-  (format nil "(setf ~A ~A)" (first extracted) (second extracted))))
-        ;; Example usage:
-
-
-        
+    (format nil "(setf ~A ~A)" (first extracted) (cl-ppcre:regex-replace-all "\\s+" (second extracted) ""))))
 
 (defun convert-return (line)
   "Convert a 'return' statement from C to Lisp."
@@ -125,15 +107,15 @@
 
 (defun convert-function-call (line)
   "Convert a function call from C to Lisp."
-  (format nil "(~A~%" line))
+  (cl-ppcre:register-groups-bind (function-name params)
+      ("^\\s*(\\w+)\\s*\\(([^)]*)\\)\\s*;\\s*$" line)
+    (let ((args (cl-ppcre:split "\\s*,\\s*" params)))
+      (format nil "(~A ~{~A~})" function-name args))))
 
 (defun convert-function-definition (line)
   "Convert a function definition from C to Lisp."
   (let ((parts (split-function-into-parameters line)))
     (format nil "(defun ~A (~{~A~^ ~})~%" (first parts) (rest parts))))
-
-;; Example usage:
-;(convert-function-definition "int main(int a, int b) {")
 
 (defun convert-block-start (line)
   "Convert a block start from C to Lisp."
@@ -146,24 +128,6 @@
 (defun convert-unknown (line)
   "Convert an unknown line from C to Lisp."
   (format nil ";; Unknown line: ~A~%" line))
-  
-
-;; String manipulation functions
-
-(defun split-string (str &optional (delimiter " "))
-  "Split a string by a specified delimiter (default is space)."
-  (let ((start 0)
-        (result '()))
-    (loop for i from 0 below (length str)
-          do (when (or (char= (char str i) (char delimiter 0))
-                       (= i (1- (length str))))
-               (when (> i start)
-                 (push (subseq str start i) result))
-               (setf start (1+ i))))
-    ;; Handle the last substring if the string does not end with a delimiter
-    (when (> (length str) start)
-      (push (subseq str start) result))
-    (nreverse result)))
 
 (defun extract-param-names (params)
   "Extract the parameter names from a C-style function parameter list, e.g., 'int a, int b'."
@@ -174,14 +138,8 @@
 
 (defun extract-return (line)
   "Extract the return type and function name from a C-style function definition, e.g., 'int main(int a, int b)'."
-  (let ((parts (split-string line)))
+  (let ((parts (cl-ppcre:split "\\s+" line)))
     (c-to-lisp-arithmetic (second parts))))
-
-;; Example usage:
-;(extract-return "return 0;")
-
-;ExAMPLE USAGE
-;(split-if-into-parameters "if (a > b) {")
 
 (defun c-to-lisp-operator (operator)
   "Convert a C operator to the equivalent Lisp operator."
@@ -217,9 +175,6 @@
                (first tokens)                      ; First operand.
                (third tokens))))))                 ; Second operand.
 
-;;example usage
-;(c-to-lisp-arithmetic "a > b")
-
 (defun split-param-helper (params)
   "Recursive helper to split the parameters, discarding types such as int, float, void* etc."
   (if (string= params "")
@@ -243,22 +198,16 @@
         ("^\\s*\\w+\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*\\{" str)
       (push function-name parts)
       (when (not (string= params ""))
-        (setf parts (append parts (split-param-helper params)))))
-        (print parts)
-    parts))
-
-;("^\\s*\\w+\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*\\{" str), correct regex for if statement
+        (append parts (split-param-helper params)))
+    parts)))
 
 (defun split-if-into-parameters (str)
   (let ((parts '()))
     (cl-ppcre:register-groups-bind (condition)
         ("^\\s*if\\s*\\(([^)]*)\\)\\s*\\{" str)
-      ;(push "if" parts)
       (when (not (string= condition ""))
         (push condition parts)))
     (nreverse parts)))
-    
-;; File I/O functions
 
 (defun read-file (filename)
   "Read the input line by line."
@@ -273,19 +222,11 @@
     (dolist (line content)
       (write-line line stream))))
 
-;; Main function
 (defun main (input-file output-file)
   "Main function to read, convert, and write the file."
   (let* ((lines (read-file input-file))
          (converted-lines (convert-lines lines)))
     (write-file output-file converted-lines)))
 
-;; Example usage:
-;(main "input.c" "output.lisp")
-;(split-string "int main (int a) {}")
-;(split-function-into-parameters "int main(int a, int b) {")
-;(split-if-into-parameters "if(a > b) {")
-
 (defun m ()
-  ;(clear)
   (main "input.c" "output.lisp"))

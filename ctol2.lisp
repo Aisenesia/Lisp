@@ -29,7 +29,7 @@
          (progn (format t "Matched function-call~%") 'function-call))
          
         ;; Match function definitions
-        ((cl-ppcre:scan "^\\s*\\w+\\s*\\(.*\\)\\s*\\{" line) 
+        ((cl-ppcre:scan "^\\s*\\w+\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*\\{" line) 
          (progn (format t "Matched function-definition~%") 'function-definition))
          
         ;; Match block start
@@ -66,10 +66,13 @@
 
 ;; Conversion functions
 
-
+;; if (a > b) { -> (if (> a b))
 (defun convert-if (line)
   "Convert an 'if' statement from C to Lisp."
-  (format nil "(if ~A~%" line))
+  (let ((extracted (split-if-into-parameters line)))
+    (print extracted)
+    (format nil "(if ~A" (c-to-lisp-arithmetic (first extracted)))))
+;(convert-if "if (a > b) {")
 
 (defun convert-for (line)
   "Convert a 'for' loop from C to Lisp."
@@ -79,14 +82,16 @@
   "Convert a 'while' loop from C to Lisp."
   (format nil "(loop while ~A~%" line))
 
+;; int a = 5; -> (setf a 5), a = 5; -> (setf a 5)
 (defun convert-assignment (line)
   "Convert an assignment from C to Lisp."
   (let ((parts (split-string line)))
-    (format nil "(setf ~A ~A~%" (second parts) (fourth parts))))
+    (format nil "(setf ~A ~A)" (second parts) (fourth parts))))
+;(convert-assignment "int x = 5;")
 
 (defun convert-return (line)
   "Convert a 'return' statement from C to Lisp."
-  (format nil "(return-from ~A~%" line))
+  (format nil "~A~%" (extract-return line)))
 
 (defun convert-function-call (line)
   "Convert a function call from C to Lisp."
@@ -94,7 +99,7 @@
 
 (defun convert-function-definition (line)
   "Convert a function definition from C to Lisp."
-  (let ((parts (nreverse (split-string-into-parameters line))))
+  (let ((parts (split-function-into-parameters line)))
     (format nil "(defun ~A (~{~A~^ ~})~%" (first parts) (rest parts))))
 
 ;; Example usage:
@@ -115,8 +120,6 @@
 
 ;; String manipulation functions
 
-(ql:quickload "cl-ppcre")
-
 (defun split-string (str &optional (delimiter " "))
   "Split a string by a specified delimiter (default is space)."
   (let ((start 0)
@@ -128,7 +131,7 @@
                  (push (subseq str start i) result))
                (setf start (1+ i))))
     ;; Handle the last substring if the string does not end with a delimiter
-    (when (> (length str) (1- start))
+    (when (> (length str) start)
       (push (subseq str start) result))
     (nreverse result)))
 
@@ -139,8 +142,16 @@
                     (cl-ppcre:split #\Space param))
                   (cl-ppcre:split #\, params))))
 
+(defun extract-return (line)
+  "Extract the return type and function name from a C-style function definition, e.g., 'int main(int a, int b)'."
+  (let ((parts (split-string line)))
+    (second parts)))
 
-(defun split-string-into-parameters (str)
+;; Example usage:
+;(extract-return "return 0;")
+
+
+(defun split-function-into-parameters (str)
   "Split a single C line such as 'int main(int a, int b)' into the function name and parameter names. Returns a list with the function name as the first element and the parameter names as the subsequent elements."
   (let ((parts '()))
     (cl-ppcre:register-groups-bind (function-name params)
@@ -149,8 +160,52 @@
       (when (not (string= params ""))
         (setf parts (append parts (split-param-helper params)))))
         (print parts)
-    (nreverse parts)))
+    parts))
 
+
+;("^\\s*\\w+\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*\\{" str), correct regex for if statement
+
+(defun split-if-into-parameters (str)
+  (let ((parts '()))
+    (cl-ppcre:register-groups-bind (condition)
+        ("^\\s*if\\s*\\(([^)]*)\\)\\s*\\{" str)
+      ;(push "if" parts)
+      (when (not (string= condition ""))
+        (push condition parts)))
+    (nreverse parts)))
+    
+;ExAMPLE USAGE
+;(split-if-into-parameters "if (a > b) {")
+
+(defun c-to-lisp-operator (operator)
+  "Convert a C operator to the equivalent Lisp operator."
+  (case operator
+    ("==" 'equal)
+    ("!=" 'not-equal)
+    (">" 'greater)
+    ("<" 'less)
+    (">=" 'greater-equal)
+    ("<=" 'less-equal)
+    ("&&" 'and)
+    ("||" 'or)
+    ("!" 'not)
+    ("+" '+)
+    ("-" '-)
+    ("*" '*)
+    ("/" '/)
+    ("%" 'mod)
+    (t operator)))
+
+
+    (defun c-to-lisp-arithmetic(expression)
+    "Convert a C arithmetic expression to Lisp. ex: 'a + b' to '(+ a b)', or 'a > b' to '(> a b)'"
+    (let ((tokens (cl-ppcre:split "\\s+" expression)))
+      (if (cl-ppcre:scan "\\s*\\w+\\s*\\(.*\\)\\s*;$" expression)
+          (format nil "(~A ~A ~A)" (c-to-lisp-operator (second tokens)) (first tokens) (third tokens))
+          (format nil "(~A ~A ~A)" (c-to-lisp-operator (second tokens)) (first tokens) (third tokens)))))
+
+  ;;example usage
+  ;(c-to-lisp-arithmetic "a > b")
 
 (defun split-param-helper (params)
   "Recursive helper to split the parameters, discarding types such as int, float, void* etc."
@@ -208,4 +263,5 @@
 ;; Example usage:
 ;(main "input.c" "output.lisp")
 ;(split-string "int main (int a) {}")
-(split-string-into-parameters "int main(int a, int b) {")
+;(split-function-into-parameters "int main(int a, int b) {")
+;(split-if-into-parameters "if(a > b) {")

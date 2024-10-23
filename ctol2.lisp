@@ -24,6 +24,10 @@
         ((cl-ppcre:scan "^\\s*return\\s*" line) 
          (progn (format t "Matched return  ") 'return-statement))
          
+        ;; Match "printf" statements
+        ((cl-ppcre:scan "^\\s*printf\\s*\\(" line) 
+         (progn (format t "Matched printf  ") 'print-statement))
+
         ;; Match function calls
         ((cl-ppcre:scan "^\\s*\\w+\\s*\\(.*\\)\\s*;\\s*$" line)
          (progn (format t "Matched function-call  ") 'function-call))
@@ -31,6 +35,10 @@
         ;; Match function definitions
         ((cl-ppcre:scan "^\\s*\\w+\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*\\{" line) 
          (progn (format t "Matched function-definition  ") 'function-definition))
+         
+         ;; Match function declarations
+        ((cl-ppcre:scan "^\\s*\\w+\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*;\\s*$" line) 
+         (progn (format t "Matched function-declaration  ") 'function-declaration))
          
         ;; Match block start
         ((cl-ppcre:scan "^\\s*\\{" line) 
@@ -52,8 +60,10 @@
     ('while-loop #'convert-while)
     ('assignment #'convert-assignment)
     ('return-statement #'convert-return)
+    ('print-statement #'convert-print)
     ('function-call #'convert-function-call)
     ('function-definition #'convert-function-definition)
+    ('function-declaration #'convert-function-declaration)
     ('block-start #'convert-block-start)
     ('block-end #'convert-block-end)
     (t #'convert-unknown)))
@@ -102,22 +112,33 @@
     (let ((value (cl-ppcre:regex-replace-all "\\s+" (second extracted) "")))
       (if (cl-ppcre:scan "^\\w+\\s*\\(.*\\)$" value)
             (if (cl-ppcre:scan "^\\w+\\s*\\(\\s*\\)\\s*$" value)
-              (format nil "(setf ~A (~A))" (first extracted) (cl-ppcre:regex-replace-all "\\s*\\(\\s*\\)\\s*" value ""))
-              (format nil "(setf ~A (~A))" (first extracted) value))
-          (format nil "(setf ~A ~A)" (first extracted) value)))))
+              (format nil "(setf ~A (~A))" (first extracted) (cl-ppcre:regex-replace-all "\\s*\\(\\s*\\)\\s*" value "")) ; Handle function calls that have no arguments
+              (format nil "(setf ~A (~A))" (first extracted) value)) ; Handle function calls that have arguments
+          (format nil "(setf ~A ~A)" (first extracted) value))))) ; Handle simple assignments
 
 (defun convert-return (line)
   "Convert a 'return' statement from C to Lisp."
-  (format nil "~A~%" (cl-ppcre:regex-replace ";" (extract-return line) "")))
+  (format nil "~A~%" (cl-ppcre:regex-replace ";" (extract-return line) ""))) ; Remove the semicolon from extracted
   ;Example usage
-  (print (convert-return "  return 5;"))
+  
+    (defun convert-print (line)
+    "Convert a 'printf' statement from C to Lisp."
+    (cl-ppcre:register-groups-bind (format-string params)
+        ("^\\s*printf\\s*\\((\"[^\"]*\")(.*)\\);?\\s*$" line)
+      (let* ((clean-format-string (cl-ppcre:regex-replace-all "%\\w" "~A" format-string))
+             (clean-params (cl-ppcre:split "\\s*,\\s*" params)))
+        (format nil "(format t \"~A\" ~{~A~})" clean-format-string clean-params))))
+  ;Example usage
+  ;(print (convert-print "printf(\"%d\\n\", i);"))
+
+
 
 (defun convert-function-call (line)
   "Convert a function call from C to Lisp."
   (cl-ppcre:register-groups-bind (function-name params)
-      ("^\\s*(\\w+)\\s*\\(([^)]*)\\)\\s*;\\s*$" line)
-    (let ((args (cl-ppcre:split "\\s*,\\s*" params)))
-      (format nil "(~A ~{~A~})" function-name args))))
+      ("^\\s*(\\w+)\\s*\\(([^)]*)\\)\\s*;\\s*$" line) 
+    (let ((args (cl-ppcre:split "\\s*,\\s*" params))) ; split by comma
+      (format nil "(~A ~{~A~})" function-name args)))) 
 
 (defun convert-function-definition (line)
   "Convert a function definition from C to Lisp."
@@ -125,7 +146,14 @@
     (format nil "(defun ~A (~{~A~^ ~})~%(progn" (first parts) (rest parts))))
 
     ;example usage
-    (print (split-function-into-parameters "int main(int a, int b)"))
+(defun convert-function-declaration (line)
+  "Convert a function declaration from C to Lisp."
+  (cl-ppcre:register-groups-bind (return-type function-name params)
+      ("^\\s*(\\w+)\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*;\\s*$" line)
+    (let ((param-names (extract-param-names params)))
+      (format nil "(declaim (ftype (function (~{~A~^ ~}) ~A) ~A))"
+              param-names (c-to-lisp-type-names return-type) function-name))))
+
 
 (defun convert-block-start (line)
   "Convert a block start from C to Lisp."
@@ -172,6 +200,16 @@
     ("/" '/)
     ("%" 'mod)
     (t operator)))
+
+(defun c-to-lisp-type-names (type)
+  "Convert a C type to the equivalent Lisp type."
+  (case (intern (string-upcase type) :keyword)
+    (:INT 'integer)
+    (:FLOAT 'float)
+    (:DOUBLE 'double-float)
+    (:CHAR 'character)
+    (:VOID 'void)
+    (t "type")))
 
 (defun c-to-lisp-arithmetic(expression)
   "Convert a C arithmetic expression to Lisp. ex: 'a + b' to '(+ a b)', or 'a > b' to '(> a b)', or 'a' to '(a)'."

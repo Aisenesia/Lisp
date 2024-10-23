@@ -77,7 +77,7 @@
   "Convert an 'if' statement from C to Lisp."
   (let ((extracted (split-if-into-parameters line)))
     (print extracted)
-    (format nil "(if ~A" (c-to-lisp-arithmetic (first extracted)))))
+    (format nil "(if ~A(progn " (c-to-lisp-arithmetic (first extracted)))))
 
 (defun convert-for (line)
   "Convert a 'for' loop from C to Lisp."
@@ -99,11 +99,18 @@
   "Converts a variable assignment from C to Lisp."
   ;; Assuming line can be 'int x = 5;' or 'x = 5;'
   (let ((extracted (extract-assignment line)))
-    (format nil "(setf ~A ~A)" (first extracted) (cl-ppcre:regex-replace-all "\\s+" (second extracted) ""))))
+    (let ((value (cl-ppcre:regex-replace-all "\\s+" (second extracted) "")))
+      (if (cl-ppcre:scan "^\\w+\\s*\\(.*\\)$" value)
+            (if (cl-ppcre:scan "^\\w+\\s*\\(\\s*\\)\\s*$" value)
+              (format nil "(setf ~A (~A))" (first extracted) (cl-ppcre:regex-replace-all "\\s*\\(\\s*\\)\\s*" value ""))
+              (format nil "(setf ~A (~A))" (first extracted) value))
+          (format nil "(setf ~A ~A)" (first extracted) value)))))
 
 (defun convert-return (line)
   "Convert a 'return' statement from C to Lisp."
   (format nil "~A~%" (cl-ppcre:regex-replace ";" (extract-return line) "")))
+  ;Example usage
+  (print (convert-return "  return 5;"))
 
 (defun convert-function-call (line)
   "Convert a function call from C to Lisp."
@@ -115,7 +122,10 @@
 (defun convert-function-definition (line)
   "Convert a function definition from C to Lisp."
   (let ((parts (split-function-into-parameters line)))
-    (format nil "(defun ~A (~{~A~^ ~})~%" (first parts) (rest parts))))
+    (format nil "(defun ~A (~{~A~^ ~})~%(progn" (first parts) (rest parts))))
+
+    ;example usage
+    (print (split-function-into-parameters "int main(int a, int b)"))
 
 (defun convert-block-start (line)
   "Convert a block start from C to Lisp."
@@ -123,7 +133,7 @@
 
 (defun convert-block-end (line)
   "Convert a block end from C to Lisp."
-  (format nil ")~%"))
+  (format nil "))~%"))
 
 (defun convert-unknown (line)
   "Convert an unknown line from C to Lisp."
@@ -137,9 +147,12 @@
                   (cl-ppcre:split #\, params))))
 
 (defun extract-return (line)
-  "Extract the return type and function name from a C-style function definition, e.g., 'int main(int a, int b)'."
-  (let ((parts (cl-ppcre:split "\\s+" line)))
-    (c-to-lisp-arithmetic (second parts))))
+  "Extract the return value from a C-style return statement, e.g., 'return 5;'."
+  (cl-ppcre:register-groups-bind (return-value)
+      ("^\\s*return\\s+([^;]+);?\\s*$" line)
+    (if return-value
+        (c-to-lisp-arithmetic return-value)
+        (format t "No match for return statement~%"))))
 
 (defun c-to-lisp-operator (operator)
   "Convert a C operator to the equivalent Lisp operator."
@@ -193,13 +206,12 @@
 
 (defun split-function-into-parameters (str)
   "Split a single C line such as 'int main(int a, int b)' into the function name and parameter names. Returns a list with the function name as the first element and the parameter names as the subsequent elements."
-  (let ((parts '()))
-    (cl-ppcre:register-groups-bind (function-name params)
-        ("^\\s*\\w+\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*\\{" str)
-      (push function-name parts)
-      (when (not (string= params ""))
-        (append parts (split-param-helper params)))
-    parts)))
+  (cl-ppcre:register-groups-bind (function-name params)
+      ("^\\s*\\w+\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*\\{" str)
+    (cons function-name
+          (if (string= params "")
+              '() ; base case
+              (split-param-helper params))))) ; recursively create the list
 
 (defun split-if-into-parameters (str)
   (let ((parts '()))

@@ -1,5 +1,5 @@
-;; GPP Language Lexer - Version 2
-;; This lexer tokenizes input for the GPP language with proper token classification
+;; GPP Language Lexer - Version 3
+;; Added improved whitespace handling to prevent UNKNOWN tokens
 
 (defpackage :gpp-lexer
   (:use :common-lisp)
@@ -49,6 +49,20 @@
   (and (not (zerop (length token)))
        (every #'digit-char-p token)))
 
+(defun is-fraction (token)
+;; if it is in format multidigits:multidigits, it's a fraction
+;; no string match, do character by character check
+    "Check if token is a fraction"
+    (let ((colon-count 0))
+      (and (not (zerop (length token)))
+           (every #'(lambda (c)
+                      (cond
+                        ((digit-char-p c) t)
+                        ((char= c #\:) (incf colon-count) t)
+                        (t nil)))
+                 token)
+           (= colon-count 1))))
+
 (defun is-identifier (token)
   "Check if token is a valid identifier"
   (and (not (zerop (length token)))
@@ -58,16 +72,21 @@
                       (char= c #\_)))
              token)))
 
+(defun whitespace-p (char)
+  "Check if character is whitespace"
+  (member char '(#\Space #\Tab #\Newline #\Return #\Page)))
+
 (defun tokenize (input)
-  "Split input string into tokens"
+  "Split input string into tokens, properly handling whitespace"
   (let ((tokens '())
         (current-token "")
         (i 0)
         (len (length input)))
     (flet ((push-token ()
-             (unless (string= current-token "")
-               (push (string-trim " " current-token) tokens)
-               (setf current-token ""))))
+             (let ((trimmed-token (string-trim '(#\Space #\Tab #\Newline #\Return #\Page) current-token)))
+               (unless (string= trimmed-token "")
+                 (push trimmed-token tokens)
+                 (setf current-token "")))))
       (loop while (< i len) do
         (let ((char (char input i)))
           (cond
@@ -88,9 +107,7 @@
              (push (string char) tokens))
             
             ;; Handle whitespace
-            ((or (char= char #\Space)
-                 (char= char #\Tab)
-                 (char= char #\Newline))
+            ((whitespace-p char)
              (push-token))
             
             ;; Accumulate other characters
@@ -100,7 +117,12 @@
       
       ;; Push final token if exists
       (push-token)
-      (nreverse tokens))))
+      (remove-if #'(lambda (token) 
+                     (or (string= token "")
+                         (every #'whitespace-p token)))
+                 (nreverse tokens)))))
+
+
 
 (defun categorize-token (token)
   "Categorize a single token and return its classification"
@@ -109,12 +131,23 @@
     ((is-keyword token) (is-keyword token))
     ((is-operator token) (is-operator token))
     ((is-integer token) (format nil "VALUEI:~A" token))
+    ((is-fraction token) (format nil "VALUEF:~A" token))
     ((is-identifier token) (format nil "IDENTIFIER:~A" token))
-    (t (format nil "UNKNOWN:~A" token))))
+    (t nil))) ; Return nil for unrecognized tokens
 
 (defun classify-input (input)
   "Classify all tokens in the input string"
-  (mapcar #'categorize-token (tokenize input)))
+  (remove nil 
+          (mapcar #'categorize-token (tokenize input))))
+
+(defun handle-line (line)
+  "Process a single line of input"
+  (handler-case
+      (dolist (token (classify-input line))
+        (when token  ; Only print non-nil tokens
+          (format t "~A~%" token)))
+    (error (e)
+      (format t "SYNTAX_ERROR: ~A~%" e))))
 
 (defun gppinterpreter (&optional filename)
   "Start the GPP interpreter"
@@ -133,14 +166,3 @@
         (let ((line (read-line nil nil)))
           (when (null line) (return))
           (handle-line line)))))
-
-(defun handle-line (line)
-  "Process a single line of input"
-  (handler-case
-      (dolist (token (classify-input line))
-        (format t "~A~%" token))
-    (error (e)
-      (format t "SYNTAX_ERROR: ~A~%" e))))
-
-;; Example usage
-;; (gppinterpreter "gp.g")

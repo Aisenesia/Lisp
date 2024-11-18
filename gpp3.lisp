@@ -1,11 +1,4 @@
-;; GPP Language Lexer - Version 3
-;; Added improved whitespace handling to prevent UNKNOWN tokens
-
-(defpackage :gpp-lexer
-  (:use :common-lisp)
-  (:export :gppinterpreter :classify-input))
-
-(in-package :gpp-lexer)
+;; GPP Meta-Language Lexer
 
 (defparameter *keywords*
   '(("and" . "KW_AND")
@@ -48,22 +41,22 @@
 
 (defun is-integer (token)
   "Check if token is an integer"
-  (and (not (zerop (length token))) ;; Ensure the token is not an empty string
-       (every #'digit-char-p token))) ;; Ensure every character in the token is a digit
+  (and (not (zerop (length token))) ;; ensure the token is not an empty string
+       (every #'digit-char-p token))) ;; ensure every character in the token is a digit
 
 (defun is-fraction (token)
-  ;; if it is in format multidigits:multidigits, it's a fraction
-  ;; no string match, do character by character check
-  "Check if token is a fraction"
-  (let ((colon-count 0))  ;; Initialize a variable to count the number of colons
-    (and (not (zerop (length token)))  ;; Ensure the token is not an empty string
-         (every #'(lambda (c)  ;; Check every character in the token
+  "Check if token is a fraction."
+  (let ((dot-count 0))  ;; initialize a variable to count the number of dots
+    (and (not (zerop (length token)))  ;; ensure the token is not an empty string
+         (digit-char-p (char token 0))  ;; ensure the first character is a digit
+         (every #'(lambda (c)  ;; check every character in the token
                     (cond
-                      ((digit-char-p c) t)  ;; If the character is a digit, return true
-                      ((char= c #\:) (incf colon-count) t)  ;; If the character is a colon, increment colon-count and return true
-                      (t nil)))  ;; For any other character, return false
+                      ((digit-char-p c) t)  ;; if the character is a digit, return true
+                      ((char= c #\f) (incf dot-count) t)  ;; if the character is a dot, increment dot-count and return true
+                      (t nil)))  ;; for any other character, return false
                token)
-         (= colon-count 1))))  ;; Ensure there is exactly one colon in the token
+         (= dot-count 1)  ;; ensure there is exactly one dot in the token
+         (not (char= (char token (1- (length token))) #\f)))))  ;; ensure the token does not end with a dot
 
 (defun is-identifier (token)
   "Check if token is a valid identifier"
@@ -84,7 +77,7 @@
         (current-token "")
         (i 0)
         (len (length input)))
-    (flet ((push-token () ;; Helper function to push a token to the list of tokens, while pushing it, it clears the current token
+    (flet ((push-token () ;; helper function to push a token to the list of tokens, while pushing it, it clears the current token
              (let ((trimmed-token (string-trim '(#\Space #\Tab #\Newline #\Return #\Page) current-token))) ;; clear whitespace
                (unless (string= trimmed-token "") ;; if token is not empty, push it to the list of tokens
                  (push trimmed-token tokens) ;; push token to tokens
@@ -92,7 +85,8 @@
       (loop while (< i len) do
         (let ((char (char input i)))
           (cond
-            ;; Handle comments
+            ;; handle comments
+            ;; dfa start here
             ((and (< i (1- len))
                   (char= char #\;) ;; if char[i] and char[i+1] are semicolons
                   (char= (char input (1+ i)) #\;))
@@ -104,21 +98,21 @@
                    do (incf i)) ;; i++
              (when (< i len) (incf i))) ;; i++
             
-            ;; Handle operators
+            ;; handle operators
             ((find (string char) *operators* :key #'car :test #'string=) ;; if char is an operator
              (push-token) ;; push current token
              (push (string char) tokens)) ;; push the operator
             
-            ;; Handle whitespace
+            ;; handle whitespace
             ((whitespace-p char)
              (push-token))
             
-            ;; Accumulate other characters
+            ;; accumulate other characters
             (t (setf current-token ;; use t to hold the current token
                      (concatenate 'string current-token (string char)))))
           (incf i)))
       
-      ;; Push final token if exists
+      ;; push final token if it exists
       (push-token)
       (remove-if #'(lambda (token) ;; remove empty and whitespace tokens
                      (or (string= token "") 
@@ -133,8 +127,8 @@
     ((string= token ";;") "COMMENT")
     ((is-keyword token) (is-keyword token))
     ((is-operator token) (is-operator token))
-    ((is-integer token) (format nil "VALUEI:~A" token))
     ((is-fraction token) (format nil "VALUEF:~A" token))
+    ((is-integer token) (format nil "VALUEI:~A" token))
     ((is-identifier token) (format nil "IDENTIFIER:~A" token))
     (t (error "Unrecognized token - ~A" token)))) ;; raise error
 
@@ -148,7 +142,7 @@
   "Process a single line of input"
   (handler-case
       (dolist (token (classify-input line))
-        (if token  ; Only print non-nil tokens
+        (if token  ; only print non-nil tokens
           (format t "~A~%" token)
           (format t "UNKNOWN: ~A~%" token)
           ))
@@ -158,14 +152,14 @@
 (defun gppinterpreter (&optional filename)
   "Start the GPP interpreter"
   (if filename
-      ;; File mode
+      ;; file mode
       (with-open-file (stream filename :if-does-not-exist nil)
         (if (null stream)
             (format t "Error: Could not open file ~A~%" filename)
             (loop for line = (read-line stream nil nil)
                   while line
                   do (handle-line line))))
-      ;; Interactive mode
+      ;; interpreter mode
     (progn
     (format t "Welcome to the G++ interpreter.~%Type (quit) to exit.~%")
      (loop

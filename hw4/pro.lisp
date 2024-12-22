@@ -1,80 +1,79 @@
-(defun is-variable? (term)
-  "Check if a term is a variable (capitalized string)."
-  (and (stringp term) (char= (char term 0) #\X)))
+(defun return-matching-rules (query axioms &optional list)
+  "Find matching rules for goal in axioms"
+  (let ((ret-list (if (null list) '() list)))
+    (dolist (axiom axioms)
+      (progn
+        (format t "DEBUG: query: ~A Matching axiom: ~A, list: ~A~%" query axiom ret-list)
+        (cond
+          ;; Case 1: Direct predicate match (unchanged)
+          ((equal (car query) (car axiom))
+           (progn
+             (format t "DEBUG: Direct match: ~A~%" axiom)
+             (cond
+               ((and (not (variable-p (cadr axiom)))
+                    (not (variable-p (cadr query))))
+               (when (equal (cadr axiom) (cadr query))
+                 (push axiom ret-list)))
+               ((or (variable-p (cadr axiom))
+                    (variable-p (cadr query)))
+                (let ((match-found t))
+                  (when (and (not (variable-p (caddr axiom)))
+                           (not (variable-p (caddr query)))
+                           (not (equal (caddr axiom) (caddr query))))
+                    (setf match-found nil))
+                  (when match-found
+                    (push axiom ret-list)))))))
+         
+          ;; Case 2: Rule match with "<" - transform query and recurse
+          ((and (listp axiom)
+                (listp (car axiom))
+                (equal (caar axiom) (car query))
+                (member "<" (cdr axiom) :test #'equal))
+           (progn
+             (format t "DEBUG: Found rule with head: ~A and body: ~A~%" (car axiom) (cddr axiom))
+             ;; For each body predicate, create a new query by substituting variables
+             (dolist (body-pred (cddr axiom))
+               (let* ((head-vars (cdar axiom))  ; Variables in the head
+                      (query-vals (cdr query))   ; Values in the query
+                      ;; Create new query by replacing variables in body predicate
+                      (new-query (substitute-vars body-pred head-vars query-vals)))
+                 (format t "DEBUG: Created new query: ~A~%" new-query)
+                 (let ((sub-matches (return-matching-rules new-query axioms)))
+                   (setf ret-list (append sub-matches ret-list))))))))))
+    ret-list))
 
-(defun unify (query axiom substitutions)
-  "Unifies a query with an axiom, returning updated substitutions or NIL if unification fails."
-  (cond
-    ((null query) substitutions)
-    ((null axiom) nil)
-    ((equal query axiom) substitutions)
-    ((is-variable? (car query))
-     (let ((existing (assoc (car query) substitutions :test #'equal)))
-       (if existing
-           (unify (cdr query) (cdr axiom) substitutions)
-           (unify (cdr query) (cdr axiom)
-                  (cons (cons (car query) (car axiom)) substitutions)))))
-    ((is-variable? (car axiom))
-     (unify (cdr query) (cdr axiom)
-            (cons (cons (car axiom) (car query)) substitutions)))
-    ((equal (car query) (car axiom))
-     (unify (cdr query) (cdr axiom) substitutions))
-    (t nil)))
+(defun substitute-vars (predicate head-vars query-vals)
+  "Substitute variables in predicate with values from query"
+  (if (listp predicate)
+      (mapcar #'(lambda (term)
+                  (let ((pos (position term head-vars :test #'equal)))
+                    (if pos
+                        (nth pos query-vals)
+                        term)))
+              predicate)
+      predicate))
+    
+(defun variable-p (term)
+  "Check if a symbol is a variable (starts with uppercase)"
+  (and (stringp term)
+       (alpha-char-p (char term 0))
+       (upper-case-p (char term 0))))
 
-(defun apply-substitutions (clause substitutions)
-  "Apply substitutions to a clause."
-  (mapcar
-   (lambda (term)
-     (if (is-variable? term)
-         (let ((sub (assoc term substitutions :test #'equal)))
-           (if sub (cdr sub) term))
-         term))
-   clause))
+;; Test the implementation
+(defun testspr ()
+  (let ((axioms '(("father" "jim" "jill")
+                  ("mother" "mary" "jill")
+                  ("mother" "mary" "zoe")
+                  ("father" "samm" "jim")
+                  (("ancestor" "X" "Y") "<" ("parent" "X" "Y"))
+                  (("ancestor" "X" "Y") "<" ("ancestor" "X" "Z") ("ancestor" "Z" "Y"))
+                  (("parent" "X" "Y") "<" ("mother" "X" "Y"))
+                  (("parent" "X" "Y") "<" ("father" "X" "Y"))))
+        (query1 '("ancestor" "Z" "jill"))
+        (query2 '("parent" "X" "jill"))
+        (query3 '("ancestor" "X" "zoe")))
+    (format t "~%Testing father query: ~A~%" (return-matching-rules query1 axioms))))
+    ;(format t "~%Testing parent query: ~A~%" (return-matching-rules query2 axioms))
+    ;(format t "~%Testing ancestor query: ~A~%" (return-matching-rules query3 axioms))))
 
-(defun resolve (axioms query substitutions)
-  "Resolve a query using axioms and existing substitutions."
-  (if (null query)
-      (list substitutions)
-      (let ((results nil)
-            (current-query (apply-substitutions (car query) substitutions)))
-        (dolist (axiom axioms)
-          (cond
-            ;; If the axiom is a fact
-            ((and (listp (car axiom)) (not (member '< axiom)))
-             (let ((new-sub (unify current-query (car axiom) substitutions)))
-               (when new-sub
-                 (setf results (nconc results (resolve axioms (cdr query) new-sub))))))
-            ;; If the axiom is a rule
-            ((and (listp (car axiom)) (member '< axiom))
-             (let* ((head (apply-substitutions (car axiom) substitutions))
-                    (body (cdr (member '< axiom))))
-               (let ((new-sub (unify current-query head substitutions)))
-                 (when new-sub
-                   (setf results (nconc results (resolve axioms (append body (cdr query)) new-sub)))))))))
-        results)))
-
-(defun prolog_prove (axioms query)
-  "Prove a query using the given axioms and return the result."
-  (let ((solutions (resolve axioms query nil)))
-    (if (null solutions)
-        nil
-        (remove-duplicates
-         (mapcar (lambda (sub)
-                   (mapcar (lambda (pair) (list (car pair) (cdr pair)))
-                           sub))
-                 solutions)
-         :test #'equal))))
-
-
-(let ((axioms '(
-                (("father" "jim" "jill"))
-                (("mother" "mary" "jill"))
-                (("father" "samm" "jim"))
-                (("ancestor" "X" "Y") "<" ("parent" "X" "Y"))
-                (("ancestor" "X" "Y") "<" ("ancestor" "X" "Z") ("ancestor" "Z" "Y"))
-                (("parent" "X" "Y") "<" ("mother" "X" "Y"))
-                (("parent" "X" "Y") "<" ("father" "X" "Y"))))
-      (query1 '(("father" "X" "jill")))
-      (query2 '(("parent" "X" "jill"))))
-  (format t "~%Testing father query: ~A" (prolog_prove axioms query1))
-  (format t "~%Testing parent query: ~A" (prolog_prove axioms query2)))
+(testspr)

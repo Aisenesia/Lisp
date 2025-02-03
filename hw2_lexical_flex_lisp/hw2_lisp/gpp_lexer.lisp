@@ -46,17 +46,17 @@
 
 (defun is-fraction (token)
   "Check if token is a fraction."
-  (let ((dot-count 0))  ;; initialize a variable to count the number of dots
+  (let ((f-count 0))  ;; initialize a variable to count the number of fs
     (and (not (zerop (length token)))  ;; ensure the token is not an empty string
          (digit-char-p (char token 0))  ;; ensure the first character is a digit
          (every #'(lambda (c)  ;; check every character in the token
                     (cond
                       ((digit-char-p c) t)  ;; if the character is a digit, return true
-                      ((char= c #\f) (incf dot-count) t)  ;; if the character is a dot, increment dot-count and return true
+                      ((char= c #\f) (incf f-count) t)  ;; if the character is a f, increment f-count and return true
                       (t nil)))  ;; for any other character, return false
                token)
-         (= dot-count 1)  ;; ensure there is exactly one dot in the token
-         (not (char= (char token (1- (length token))) #\f)))))  ;; ensure the token does not end with a dot
+         (= f-count 1)  ;; ensure there is exactly one f in the token
+         (not (char= (char token (1- (length token))) #\f)))))  ;; ensure the token does not end with a f
 
 (defun is-identifier (token)
   "Check if token is a valid identifier"
